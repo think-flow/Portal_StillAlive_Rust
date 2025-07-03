@@ -1,0 +1,10 @@
+[package]
+name = "portal_still_alive"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+ctrlc = "3.4.7"
+regex = "1.11.1"
+term_size = "0.3.2"
