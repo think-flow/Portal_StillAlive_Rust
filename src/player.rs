@@ -85,20 +85,15 @@ fn mci_send_string(command: &str) -> anyhow::Result<()> {
 
         if res != 0 {
             let mut err_str =
-                format!("Error executing MCI command '{command}'. Error code: {res}.");
-            let mut buffer = [0u16, 256];
+                format!("Error executing MCI command '{command}'. Error code: {res}. Error Msg: ");
+            let mut buffer = [0; 256];
 
             mciGetErrorStringW(res, buffer.as_mut_ptr(), buffer.len() as u32);
 
-            let s = String::from_utf16_lossy(
-                &buffer[..buffer
-                    .iter()
-                    .position(|c| *c == 0u16)
-                    .unwrap_or(buffer.len())],
-            );
+            let s = String::from_utf16(&buffer)?;
             err_str.push_str(&s);
 
-            bail!("{}", s)
+            bail!(err_str)
         }
     }
 

@@ -1,14 +1,14 @@
 use std::{
     env,
-    io::Write,
+    io::{Write, stdout},
     str,
     sync::{LazyLock, Mutex},
     thread,
     time::Duration,
 };
 
-use regex_lite::Regex;
 use crate::data;
+use regex_lite::Regex;
 
 // xterm, rxvt, konsole ...
 // but fbcon in linux kernel does not support screen buffer
@@ -112,14 +112,15 @@ fn get_term() -> String {
 }
 
 fn _print(str: &str, new_line: bool) {
+    let mut lock = stdout().lock();
     if new_line {
-        println!("{}", str);
+        writeln!(lock, "{}", str).unwrap();
         let mut cursor_x = CURSOR_X.lock().unwrap();
         let mut cursor_y = CURSOR_Y.lock().unwrap();
         *cursor_x = 1;
         *cursor_y += 1;
     } else {
-        print!("{}", str);
+        write!(lock, "{}", str).unwrap();
         let mut cursor_x = CURSOR_X.lock().unwrap();
         *cursor_x += str.chars().count() as i32;
     }
@@ -134,17 +135,36 @@ pub fn begin_draw() {
     }
 }
 
+pub fn end_draw() {
+    let mut is_end_draw = IS_END_DRAW.lock().unwrap();
+    *is_end_draw = true;
+
+    if *ENABLE_COLOR {
+        print!("\x1b[0m");
+    }
+
+    if *ENABLE_SCREEN_BUFFER {
+        print!("\x1b[?1049l");
+    } else {
+        clear();
+        r#move(1, 1, false);
+    }
+}
+
 pub fn clear() {
     let mut cursor_x = CURSOR_X.lock().unwrap();
     let mut cursor_y = CURSOR_Y.lock().unwrap();
     *cursor_x = 1;
     *cursor_y = 1;
+
     print!("\x1b[2J");
 }
 
 pub fn r#move(x: i32, y: i32, update_cursor: bool) {
-    print!("\x1b[{};{}H", y, x);
-    std::io::stdout().flush().unwrap();
+    let mut lock = stdout().lock();
+    write!(lock, "\x1b[{};{}H", y, x).unwrap();
+    stdout().flush().unwrap();
+
     if update_cursor {
         let mut cursor_x = CURSOR_X.lock().unwrap();
         let mut cursor_y = CURSOR_Y.lock().unwrap();
@@ -189,24 +209,8 @@ pub fn draw_frame() {
 
     r#move(2, 2, true);
 
-    std::io::stdout().flush().unwrap();
+    stdout().flush().unwrap();
     thread::sleep(Duration::from_millis(1000));
-}
-
-pub fn end_draw() {
-    let mut is_end_draw = IS_END_DRAW.lock().unwrap();
-    *is_end_draw = true;
-
-    if *ENABLE_COLOR {
-        print!("\x1b[0m");
-    }
-
-    if *ENABLE_SCREEN_BUFFER {
-        print!("\x1b[?1049l");
-    } else {
-        clear();
-        r#move(1, 1, false);
-    }
 }
 
 pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> i32 {
@@ -215,7 +219,7 @@ pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> 
     r#move(x + 2, y + 2, true);
     for c in str.chars() {
         _print(&c.to_string(), false);
-        std::io::stdout().flush().unwrap();
+        stdout().flush().unwrap();
         thread::sleep(Duration::from_millis((interval * 1000.0) as u64));
         x += 1;
     }
@@ -233,17 +237,9 @@ pub fn draw_arts(ch: i32) {
     for dy in 0..ASCII_ART_HEIGHT {
         r#move(*ASCII_ART_X, *ASCII_ART_Y + dy, true);
         print!("{}", arts[ch as usize][dy as usize]);
-        std::io::stdout().flush().unwrap();
+        stdout().flush().unwrap();
         thread::sleep(Duration::from_millis(10));
     }
-}
-
-pub fn clear_lyrics() {
-    r#move(1, 2, true);
-    for _ in 0..*LYRIC_HEIGHT {
-        _print(&format!("|{}", " ".repeat(*LYRIC_WIDTH as usize)), true);
-    }
-    r#move(2, 2, true);
 }
 
 pub fn draw_credits() {
@@ -273,18 +269,19 @@ pub fn draw_credits() {
                         break;
                     }
 
+                    let mut lock = stdout().lock();
                     for y in 2..(2 + *CREDITS_HEIGHT - last_credits.len() as i32) {
                         r#move(*CREDITS_POS_X, y, false);
-                        print!("{}", " ".repeat(*CREDITS_WIDTH as usize));
+                        write!(lock, "{}", " ".repeat(*CREDITS_WIDTH as usize)).unwrap();
                     }
 
                     for k in 0..last_credits.len() as i32 {
                         let y = 2 + *CREDITS_HEIGHT - last_credits.len() as i32 + k;
                         r#move(*CREDITS_POS_X, y, false);
-                        print!("{}", last_credits[k as usize]);
+                        write!(lock, "{}", last_credits[k as usize]).unwrap();
                         let count =
                             *CREDITS_WIDTH - last_credits[k as usize].chars().count() as i32;
-                        print!("{}", " ".repeat(count as usize));
+                        write!(lock, "{}", " ".repeat(count as usize)).unwrap();
                     }
 
                     r#move(*CURSOR_X.lock().unwrap(), *CURSOR_Y.lock().unwrap(), false);
@@ -297,7 +294,8 @@ pub fn draw_credits() {
                     }
 
                     r#move(*CREDITS_POS_X + credit_x, *CREDITS_HEIGHT + 1, false);
-                    print!("{}", ch.to_string());
+                    let mut lock = stdout().lock();
+                    write!(lock, "{}", ch.to_string()).unwrap();
                     r#move(*CURSOR_X.lock().unwrap(), *CURSOR_Y.lock().unwrap(), false);
 
                     credit_x += 1;
@@ -309,6 +307,14 @@ pub fn draw_credits() {
             }
         })
         .unwrap();
+}
+
+pub fn clear_lyrics() {
+    r#move(1, 2, true);
+    for _ in 0..*LYRIC_HEIGHT {
+        _print(&format!("|{}", " ".repeat(*LYRIC_WIDTH as usize)), true);
+    }
+    r#move(2, 2, true);
 }
 
 pub fn get_unix_timestamp_ms() -> f64 {

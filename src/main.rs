@@ -11,7 +11,7 @@ fn main() {
     let enable_sound = !env::args().any(|arg| arg == "--no-sound");
     if enable_sound {
         if !Path::new(SOUND_FILE_PATH).exists() {
-            println!("sa1.mp3 not found");
+            eprintln!("sa1.mp3 not found");
             process::exit(2);
         }
     }
@@ -100,7 +100,7 @@ fn main() {
                 if enable_sound {
                     if let Err(e) = player::play(SOUND_FILE_PATH) {
                         end_draw();
-                        println!("{:?}", e);
+                        eprintln!("{:?}", e);
                         process::exit(2);
                     }
                 }
