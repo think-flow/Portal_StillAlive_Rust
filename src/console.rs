@@ -7,8 +7,7 @@ use std::{
     time::Duration,
 };
 
-use regex::Regex;
-
+use regex_lite::Regex;
 use crate::data;
 
 // xterm, rxvt, konsole ...
