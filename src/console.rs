@@ -10,11 +10,21 @@ use std::{
 use crate::data;
 use regex_lite::Regex;
 
+static TERM: LazyLock<String> = LazyLock::new(|| {
+    let mut term = env::var("TERM").unwrap_or("vt100".to_owned());
+    if cfg!(target_os = "windows") {
+        if check_support() {
+            term = "windows".to_owned();
+        }
+    }
+    term
+});
+
 // xterm, rxvt, konsole ...
 // but fbcon in linux kernel does not support screen buffer
 static ENABLE_SCREEN_BUFFER: LazyLock<bool> = LazyLock::new(|| {
-    let term = get_term();
-    !(IS_VT.is_some() || &term == "linux")
+    let term = TERM.as_str();
+    !(IS_VT.is_some() || term == "linux")
 });
 
 // color support is after VT241
@@ -30,10 +40,10 @@ static ENABLE_COLOR: LazyLock<bool> = LazyLock::new(|| {
 });
 
 static IS_VT: LazyLock<Option<String>> = LazyLock::new(|| {
-    let term = get_term();
+    let term = TERM.as_str();
     Regex::new(r"vt(\d+)")
         .unwrap()
-        .captures(&term)
+        .captures(term)
         .map(|c| c[0].to_owned())
 });
 
@@ -106,10 +116,6 @@ static CREDITS_POS_X: LazyLock<i32> = LazyLock::new(|| *LYRIC_WIDTH + 4);
 static CURSOR_X: Mutex<i32> = Mutex::new(0);
 static CURSOR_Y: Mutex<i32> = Mutex::new(0);
 static IS_END_DRAW: Mutex<bool> = Mutex::new(false);
-
-fn get_term() -> String {
-    env::var("TERM").unwrap_or("vt100".to_owned())
-}
 
 fn _print(str: &str, new_line: bool) {
     let mut lock = stdout().lock();
@@ -322,4 +328,26 @@ pub fn get_unix_timestamp_ms() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis() as f64
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    unsafe fn GetStdHandle(nStdHandle: u32) -> std::os::windows::raw::HANDLE;
+    unsafe fn GetConsoleMode(
+        hConsoleHandle: std::os::windows::raw::HANDLE,
+        lpMode: *mut u32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+pub fn check_support() -> bool {
+    unsafe {
+        let handle = GetStdHandle(-11i32 as u32);
+        let mut mode: u32 = 0;
+        if GetConsoleMode(handle, &mut mode) > 0 {
+            return (mode & 0x0004) != 0;
+        }
+        return false;
+    }
 }
