@@ -10,14 +10,18 @@ use std::{
 use crate::data;
 use regex_lite::Regex;
 
+#[cfg(target_os = "windows")]
 static TERM: LazyLock<String> = LazyLock::new(|| {
     let mut term = env::var("TERM").unwrap_or("vt100".to_owned());
-    if cfg!(target_os = "windows") {
-        if check_support() {
-            term = "windows".to_owned();
-        }
+    if check_support() {
+        term = "windows".to_owned();
     }
     term
+});
+
+#[cfg(target_os = "linux")]
+static TERM: LazyLock<String> = LazyLock::new(|| {
+    env::var("TERM").unwrap_or("vt100".to_owned())
 });
 
 // xterm, rxvt, konsole ...
