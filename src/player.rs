@@ -68,9 +68,9 @@ unsafe extern "system" {
         lpstrReturnString: *mut u16,
         uReturnLength: u32,
         hwndCallback: usize,
-    ) -> i32;
+    ) -> u32;
 
-    unsafe fn mciGetErrorStringW(mcierr: u32, lpszErrorText: *mut u16, cchErrorText: u32) -> i32;
+    unsafe fn mciGetErrorStringW(mcierr: u32, lpszErrorText: *mut u16, cchErrorText: u32) -> u32;
 }
 
 #[cfg(target_os = "windows")]
@@ -88,7 +88,7 @@ fn mci_send_string(command: &str) -> anyhow::Result<()> {
                 format!("Error executing MCI command '{command}'. Error code: {res}.");
             let mut buffer = [0u16, 256];
 
-            mciGetErrorStringW(res as u32, buffer.as_mut_ptr(), buffer.len() as u32);
+            mciGetErrorStringW(res, buffer.as_mut_ptr(), buffer.len() as u32);
 
             let s = String::from_utf16_lossy(
                 &buffer[..buffer

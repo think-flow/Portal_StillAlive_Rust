@@ -312,9 +312,9 @@ pub fn draw_credits() {
         .unwrap();
 }
 
-pub fn get_unix_timestamp_ms() -> u128 {
+pub fn get_unix_timestamp_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis() as u128
+        .as_millis() as f64
 }

@@ -1,12 +1,12 @@
 use std::sync::LazyLock;
 
-pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(|| 
+pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(|| {
     [
         // Page 1
         Lyric::new("Forms FORM-29827281-12:", 0, -1.0, 0),
         Lyric::new("Test Assessment Report", 200, -1.0, 0),
         Lyric::new("\0\0\0\0\0\0\0", 400, -1.0, 0), // Keep flushing the buffer
-        Lyric::new("", 710, 0.0, 4), // Music start
+        Lyric::new("", 710, 0.0, 4),                // Music start
         Lyric::new("This was a triumph.", 730, 2.0, 0),
         Lyric::new("", 930, 0.0, 5), // Credits start
         Lyric::new("I'm making a note here:", 1123, 2.0, 0),
@@ -32,7 +32,6 @@ pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(||
         Lyric::new(0, 4903, 0.0, 2), // ASCII 1
         Lyric::new("For the people who are", 4973, -1.0, 0),
         Lyric::new("still alive.", 5110, 1.6, 1),
-
         // Page 2
         Lyric::new(0, 5353, 0.0, 3), // Clear lyrics
         Lyric::new("Forms FORM-55551-5:", 5413, -1.0, 0),
@@ -67,7 +66,6 @@ pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(||
         Lyric::new(0, 10120, 0.0, 2), // ASCII 1
         Lyric::new("For the people who are", 10190, -1.0, 0),
         Lyric::new("Still alive.", 10327, 1.8, 0),
-
         // Page 3
         Lyric::new(0, 10603, 0.0, 3), // Clear lyrics
         Lyric::new("Forms FORM-55551-6:", 10663, -1.0, 0),
@@ -104,7 +102,6 @@ pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(||
         Lyric::new(0, 15320, 0.0, 2), // ASCII 1
         Lyric::new("On the people who are", 15390, -1.0, 0),
         Lyric::new("still alive", 15553, 2.0, 1),
-
         // Page 4
         Lyric::new(0, 15697, 0.0, 3), // Clear lyrics
         Lyric::new("", 15757, 0.05, 0),
@@ -129,13 +126,14 @@ pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(||
         Lyric::new("STILL ALIVE", 17760, 1.13, 0),
         Lyric::new(0, 17900, 0.0, 3), // Clear lyrics
         Lyric::new(0, 18500, 0.0, 3), // Clear lyrics
-        Lyric::new("ENDENDENDENDENDENDENDEND", 18500, 0.05, 9)
-    ]);
+        Lyric::new("ENDENDENDENDENDENDENDEND", 18500, 0.05, 9),
+    ]
+});
 
 #[derive(Debug)]
 pub struct Lyric {
     pub words: WordsContent,
-    pub time: i32,
+    pub time: f64,
     pub interval: f64,
     pub mode: i32,
 }
@@ -146,23 +144,23 @@ pub enum WordsContent {
     Int(i32),
 }
 
-impl From<&'static str> for  WordsContent{
+impl From<&'static str> for WordsContent {
     fn from(value: &'static str) -> Self {
         WordsContent::Str(value)
     }
 }
 
-impl From<i32> for  WordsContent{
+impl From<i32> for WordsContent {
     fn from(value: i32) -> Self {
         WordsContent::Int(value)
     }
 }
 
 impl Lyric {
-    fn new(words:impl Into<WordsContent>, time: i32, interval: f64, mode: i32) -> Self {
+    fn new(words: impl Into<WordsContent>, time: i32, interval: f64, mode: i32) -> Self {
         Lyric {
-            words:words.into(),
-            time,
+            words: words.into(),
+            time: time as f64,
             interval,
             mode,
         }
