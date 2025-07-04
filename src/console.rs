@@ -220,7 +220,7 @@ pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> 
     for c in str.chars() {
         _print(&c.to_string(), false);
         stdout().flush().unwrap();
-        thread::sleep(Duration::from_millis((interval * 1000.0) as u64));
+        thread::sleep(Duration::from_secs_f64(interval));
         x += 1;
     }
 
