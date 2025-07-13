@@ -20,9 +20,7 @@ static TERM: LazyLock<String> = LazyLock::new(|| {
 });
 
 #[cfg(target_os = "linux")]
-static TERM: LazyLock<String> = LazyLock::new(|| {
-    env::var("TERM").unwrap_or("vt100".to_owned())
-});
+static TERM: LazyLock<String> = LazyLock::new(|| env::var("TERM").unwrap_or("vt100".to_owned()));
 
 // xterm, rxvt, konsole ...
 // but fbcon in linux kernel does not support screen buffer
@@ -258,14 +256,14 @@ pub fn draw_credits() {
         .spawn(|| {
             let credits = data::CREDITS;
             let mut credit_x: i32 = 0;
-            let mut i: i32 = 0;
-            let length: i32 = credits.chars().count() as i32;
+            let mut i: f64 = 0.0;
+            let length: f64 = credits.chars().count() as f64;
             let mut last_credits: Vec<String> = vec!["".to_owned()];
-            let start_time: f64 = get_unix_timestamp_ms() as f64 / 1000.0;
+            let instant = std::time::Instant::now();
 
             for ch in credits.chars() {
-                let current_time: f64 = start_time + 174.0 / length as f64 * i as f64;
-                i += 1;
+                let duration: f64 = 174.0 / length * i;
+                i += 1.0;
                 if ch == '\n' {
                     credit_x = 0;
                     last_credits.push("".to_owned());
@@ -311,7 +309,7 @@ pub fn draw_credits() {
                     credit_x += 1;
                 }
 
-                while get_unix_timestamp_ms() as f64 / 1000.0 < current_time {
+                while instant.elapsed().as_secs_f64() < duration {
                     thread::sleep(Duration::from_millis(10));
                 }
             }
@@ -325,13 +323,6 @@ pub fn clear_lyrics() {
         _print(&format!("|{}", " ".repeat(*LYRIC_WIDTH as usize)), true);
     }
     r#move(2, 2, true);
-}
-
-pub fn get_unix_timestamp_ms() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as f64
 }
 
 #[cfg(target_os = "windows")]

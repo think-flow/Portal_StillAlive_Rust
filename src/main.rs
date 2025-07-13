@@ -33,40 +33,38 @@ fn main() {
     r#move(2, 2, true);
     thread::sleep(Duration::from_millis(1000));
 
-    let start_time = get_unix_timestamp_ms() / 10.0;
+    let instant = std::time::Instant::now();
     let mut index = 0;
     let mut x = 0;
     let mut y = 0;
-    let lyrics = &*data::LYRICS;
+    let lyrics = &data::LYRICS;
 
     while lyrics[index].mode != 9 {
         let current_lyric = &lyrics[index];
 
-        let current_time = get_unix_timestamp_ms() / 10.0 - start_time;
-
-        if current_time > current_lyric.time {
-            let mut word_count = 0;
+        let past_time = (instant.elapsed().as_millis() / 10) as i32;
+        if past_time > current_lyric.time {
+            let mut word_count:f64 = 0.0;
             let interval: f64;
 
             if current_lyric.mode <= 1 || current_lyric.mode >= 5 {
                 match current_lyric.words {
                     data::WordsContent::Str(v) => {
-                        word_count = v.chars().count();
+                        word_count = v.chars().count() as f64;
                     }
                     _ => unreachable!("在此处WordsContent不可能为Int"),
                 }
             }
 
-            if word_count == 0 {
-                word_count = 1;
+            if word_count == 0.0 {
+                word_count = 1.0;
             }
 
             if current_lyric.interval < 0.0 {
                 let next_lyric = &lyrics[index + 1];
-                interval =
-                    (next_lyric.time - current_lyric.time) / 100.0 / word_count as f64;
+                interval = (next_lyric.time - current_lyric.time) as f64 / 100.0 / word_count;
             } else {
-                interval = current_lyric.interval / word_count as f64;
+                interval = current_lyric.interval / word_count;
             }
 
             if current_lyric.mode == 0 {

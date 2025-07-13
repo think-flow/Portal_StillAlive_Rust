@@ -133,7 +133,7 @@ pub static LYRICS: LazyLock<[Lyric; 121]> = std::sync::LazyLock::new(|| {
 #[derive(Debug)]
 pub struct Lyric {
     pub words: WordsContent,
-    pub time: f64,
+    pub time: i32,
     pub interval: f64,
     pub mode: i32,
 }
@@ -160,7 +160,7 @@ impl Lyric {
     fn new(words: impl Into<WordsContent>, time: i32, interval: f64, mode: i32) -> Self {
         Lyric {
             words: words.into(),
-            time: time as f64,
+            time: time,
             interval,
             mode,
         }
