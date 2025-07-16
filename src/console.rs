@@ -2,7 +2,13 @@ use std::{
     env,
     io::{Write, stdout},
     str,
-    sync::{LazyLock, Mutex},
+    sync::{
+        LazyLock,
+        atomic::{
+            AtomicBool, AtomicI32,
+            Ordering::{Acquire, Release},
+        },
+    },
     thread,
     time::Duration,
 };
@@ -115,22 +121,18 @@ static ASCII_ART_Y: LazyLock<i32> = LazyLock::new(|| *CREDITS_HEIGHT + 3);
 
 static CREDITS_POS_X: LazyLock<i32> = LazyLock::new(|| *LYRIC_WIDTH + 4);
 
-static CURSOR_X: Mutex<i32> = Mutex::new(0);
-static CURSOR_Y: Mutex<i32> = Mutex::new(0);
-static IS_END_DRAW: Mutex<bool> = Mutex::new(false);
+static CURSOR_X: AtomicI32 = AtomicI32::new(0);
+static CURSOR_Y: AtomicI32 = AtomicI32::new(0);
+static IS_END_DRAW: AtomicBool = AtomicBool::new(false);
 
 fn _print(str: &str, new_line: bool) {
-    let mut lock = stdout().lock();
     if new_line {
-        writeln!(lock, "{}", str).unwrap();
-        let mut cursor_x = CURSOR_X.lock().unwrap();
-        let mut cursor_y = CURSOR_Y.lock().unwrap();
-        *cursor_x = 1;
-        *cursor_y += 1;
+        println!("{}", str);
+        CURSOR_X.store(1, Release);
+        CURSOR_Y.fetch_add(1, Release);
     } else {
-        write!(lock, "{}", str).unwrap();
-        let mut cursor_x = CURSOR_X.lock().unwrap();
-        *cursor_x += str.chars().count() as i32;
+        print!("{}", str);
+        CURSOR_X.fetch_add(str.chars().count() as i32, Release);
     }
 }
 
@@ -144,8 +146,7 @@ pub fn begin_draw() {
 }
 
 pub fn end_draw() {
-    let mut is_end_draw = IS_END_DRAW.lock().unwrap();
-    *is_end_draw = true;
+    IS_END_DRAW.store(true, Release);
 
     if *ENABLE_COLOR {
         print!("\x1b[0m");
@@ -160,24 +161,19 @@ pub fn end_draw() {
 }
 
 pub fn clear() {
-    let mut cursor_x = CURSOR_X.lock().unwrap();
-    let mut cursor_y = CURSOR_Y.lock().unwrap();
-    *cursor_x = 1;
-    *cursor_y = 1;
+    CURSOR_X.store(1, Release);
+    CURSOR_Y.store(1, Release);
 
     print!("\x1b[2J");
 }
 
 pub fn r#move(x: i32, y: i32, update_cursor: bool) {
-    let mut lock = stdout().lock();
-    write!(lock, "\x1b[{};{}H", y, x).unwrap();
+    print!("\x1b[{};{}H", y, x);
     stdout().flush().unwrap();
 
     if update_cursor {
-        let mut cursor_x = CURSOR_X.lock().unwrap();
-        let mut cursor_y = CURSOR_Y.lock().unwrap();
-        *cursor_x = x;
-        *cursor_y = y;
+        CURSOR_X.store(x, Release);
+        CURSOR_Y.store(y, Release);
     }
 }
 
@@ -226,8 +222,11 @@ pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> 
     let mut y = y;
     r#move(x + 2, y + 2, true);
     for c in str.chars() {
-        _print(&c.to_string(), false);
-        stdout().flush().unwrap();
+        {
+            let mut lock = stdout().lock();
+            _print(&c.to_string(), false);
+            lock.flush().unwrap();
+        }
         thread::sleep(Duration::from_secs_f64(interval));
         x += 1;
     }
@@ -240,14 +239,18 @@ pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> 
     return x;
 }
 
-pub fn draw_arts(ch: i32) {
+pub fn draw_arts(ch: i32, x: i32, y: i32) {
     let arts = &data::ARTS;
     for dy in 0..ASCII_ART_HEIGHT {
-        r#move(*ASCII_ART_X, *ASCII_ART_Y + dy, true);
-        print!("{}", arts[ch as usize][dy as usize]);
-        stdout().flush().unwrap();
+        {
+            let mut lock = stdout().lock();
+            r#move(*ASCII_ART_X, *ASCII_ART_Y + dy, true);
+            print!("{}", arts[ch as usize][dy as usize]);
+            lock.flush().unwrap();
+        }
         thread::sleep(Duration::from_millis(10));
     }
+    r#move(x + 2, y + 2, true);
 }
 
 pub fn draw_credits() {
@@ -273,7 +276,7 @@ pub fn draw_credits() {
                             .to_vec();
                     }
 
-                    if *IS_END_DRAW.lock().unwrap() {
+                    if IS_END_DRAW.load(Acquire) {
                         break;
                     }
 
@@ -292,19 +295,19 @@ pub fn draw_credits() {
                         write!(lock, "{}", " ".repeat(count as usize)).unwrap();
                     }
 
-                    r#move(*CURSOR_X.lock().unwrap(), *CURSOR_Y.lock().unwrap(), false);
+                    r#move(CURSOR_X.load(Acquire), CURSOR_Y.load(Acquire), false);
                 } else {
                     let str = last_credits.last_mut().unwrap();
                     str.push(ch);
 
-                    if *IS_END_DRAW.lock().unwrap() {
+                    if IS_END_DRAW.load(Acquire) {
                         break;
                     }
 
-                    r#move(*CREDITS_POS_X + credit_x, *CREDITS_HEIGHT + 1, false);
                     let mut lock = stdout().lock();
+                    r#move(*CREDITS_POS_X + credit_x, *CREDITS_HEIGHT + 1, false);
                     write!(lock, "{}", ch.to_string()).unwrap();
-                    r#move(*CURSOR_X.lock().unwrap(), *CURSOR_Y.lock().unwrap(), false);
+                    r#move(CURSOR_X.load(Acquire), CURSOR_Y.load(Acquire), false);
 
                     credit_x += 1;
                 }

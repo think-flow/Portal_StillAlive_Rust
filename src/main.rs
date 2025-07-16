@@ -44,7 +44,7 @@ fn main() {
 
         let past_time = (instant.elapsed().as_millis() / 10) as i32;
         if past_time > current_lyric.time {
-            let mut word_count:f64 = 0.0;
+            let mut word_count: f64 = 0.0;
             let interval: f64;
 
             if current_lyric.mode <= 1 || current_lyric.mode >= 5 {
@@ -85,8 +85,7 @@ fn main() {
             } else if current_lyric.mode == 2 {
                 match current_lyric.words {
                     data::WordsContent::Int(v) => {
-                        draw_arts(v);
-                        r#move(x + 2, y + 2, true);
+                        draw_arts(v, x, y);
                     }
                     _ => unreachable!("在此处WordsContent不可能为Str"),
                 }
