@@ -27,6 +27,10 @@ fn main() {
         process::exit(1)
     });
 
+    if let Err(e) = console::init() {
+        eprintln!("{}", e);
+        process::exit(2)
+    };
     begin_draw();
     clear();
     draw_frame();
@@ -97,7 +101,7 @@ fn main() {
                 if enable_sound {
                     if let Err(e) = player::play(SOUND_FILE_PATH) {
                         end_draw();
-                        eprintln!("{:?}", e);
+                        eprintln!("{}", e);
                         process::exit(2);
                     }
                 }

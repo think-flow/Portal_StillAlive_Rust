@@ -3,7 +3,7 @@ use std::{
     io::{Write, stdout},
     str,
     sync::{
-        LazyLock,
+        OnceLock,
         atomic::{
             AtomicBool, AtomicI32,
             Ordering::{Acquire, Release},
@@ -14,145 +14,155 @@ use std::{
 };
 
 use crate::data;
+use anyhow::{anyhow, bail};
 use regex_lite::Regex;
 
-#[cfg(target_os = "windows")]
-static TERM: LazyLock<String> = LazyLock::new(|| {
+struct Config {
+    is_end_draw: AtomicBool,
+    cursor_x: AtomicI32,
+    cursor_y: AtomicI32,
+    credits_pos_x: i32,
+    ascii_art_x: i32,
+    ascii_art_y: i32,
+    lyric_height: i32,
+    lyric_width: i32,
+    credits_height: i32,
+    credits_width: i32,
+    ascii_art_height: i32,
+    is_vt: Option<String>,
+    enable_screen_buffer: bool,
+    enable_color: bool,
+}
+
+static CFG: OnceLock<Config> = OnceLock::new();
+
+pub fn init() -> anyhow::Result<()> {
+    #[allow(unused_mut)]
     let mut term = env::var("TERM").unwrap_or("vt100".to_owned());
-    if check_support() {
-        term = "windows".to_owned();
+
+    #[cfg(target_os = "windows")]
+    {
+        if check_support() {
+            term = "windows".to_owned();
+        }
     }
-    term
-});
 
-#[cfg(target_os = "linux")]
-static TERM: LazyLock<String> = LazyLock::new(|| env::var("TERM").unwrap_or("vt100".to_owned()));
+    let is_vt = Regex::new(r"vt(\d+)")?
+        .captures(&term)
+        .map(|c| c[0].to_owned());
 
-// xterm, rxvt, konsole ...
-// but fbcon in linux kernel does not support screen buffer
-static ENABLE_SCREEN_BUFFER: LazyLock<bool> = LazyLock::new(|| {
-    let term = TERM.as_str();
-    !(IS_VT.is_some() || term == "linux")
-});
+    // xterm, rxvt, konsole ...
+    // but fbcon in linux kernel does not support screen buffer
+    let enable_screen_buffer = !(is_vt.is_some() || term == "linux");
 
-// color support is after VT241
-static ENABLE_COLOR: LazyLock<bool> = LazyLock::new(|| {
-    !IS_VT.is_some()
-        || Regex::new(r"\d+")
-            .unwrap()
-            .captures(IS_VT.as_ref().unwrap())
+    let enable_color = !is_vt.is_some()
+        || Regex::new(r"\d+")?
+            .captures(is_vt.as_ref().unwrap())
             .unwrap()[0]
-            .parse::<i32>()
-            .unwrap()
-            >= 241
-});
+            .parse::<i32>()?
+            >= 241;
 
-static IS_VT: LazyLock<Option<String>> = LazyLock::new(|| {
-    let term = TERM.as_str();
-    Regex::new(r"vt(\d+)")
-        .unwrap()
-        .captures(term)
-        .map(|c| c[0].to_owned())
-});
-
-static TERM_COLUMNS: LazyLock<i32> = LazyLock::new(|| {
-    let mut width: i32;
-    if IS_VT.is_some() {
-        width = 80;
+    let mut term_columns: i32;
+    let mut term_lines: i32;
+    if is_vt.is_some() {
+        term_columns = 80;
+        term_lines = 24;
     } else {
-        let w = term_size::dimensions()
-            .map(|(width, _)| width)
-            .expect("无法获取控制台宽度（非终端环境）");
-        width = w as i32;
+        let (w, h) = term_size::dimensions().ok_or(anyhow!("无法获取控制台尺寸（非终端环境）"))?;
+        term_columns = w as i32;
+        term_lines = h as i32;
     }
 
     if let Ok(env_col) = env::var("COLUMNS") {
         if let Ok(env_col) = env_col.parse::<i32>() {
-            width = env_col;
+            term_columns = env_col;
         }
-    }
-
-    if width < 80 {
-        panic!("the terminal size should be at least 80x24");
-    }
-
-    width
-});
-
-static TERM_LINES: LazyLock<i32> = LazyLock::new(|| {
-    let mut height: i32;
-    if IS_VT.is_some() {
-        height = 24;
-    } else {
-        let h = term_size::dimensions()
-            .map(|(_, height)| height)
-            .expect("无法获取控制台高度（非终端环境）");
-        height = h as i32;
     }
 
     if let Ok(env_line) = env::var("LINES") {
         if let Ok(env_line) = env_line.parse::<i32>() {
-            height = env_line;
+            term_lines = env_line;
         }
     }
 
-    if height < 24 {
-        panic!("the terminal size should be at least 80x24");
+    if term_columns < 80 || term_lines < 24 {
+        bail!("the terminal size should be at least 80x24");
     }
 
-    height
-});
+    let ascii_art_width: i32 = 40;
+    let ascii_art_height: i32 = 20;
 
-static ASCII_ART_WIDTH: i32 = 40;
-static ASCII_ART_HEIGHT: i32 = 20;
+    let credits_width = std::cmp::min((term_columns - 4) / 2, 56);
 
-static CREDITS_WIDTH: LazyLock<i32> = LazyLock::new(|| std::cmp::min((*TERM_COLUMNS - 4) / 2, 56));
+    let credits_height = term_lines - ascii_art_height - 2;
 
-static CREDITS_HEIGHT: LazyLock<i32> = LazyLock::new(|| *TERM_LINES - ASCII_ART_HEIGHT - 2);
+    let lyric_width = term_columns - 4 - credits_width;
 
-static LYRIC_WIDTH: LazyLock<i32> = LazyLock::new(|| *TERM_COLUMNS - 4 - *CREDITS_WIDTH);
+    let lyric_height = term_lines - 2;
 
-static LYRIC_HEIGHT: LazyLock<i32> = LazyLock::new(|| *TERM_LINES - 2);
+    let ascii_art_x = lyric_width + 4 + (credits_width - ascii_art_width) / 2;
 
-static ASCII_ART_X: LazyLock<i32> =
-    LazyLock::new(|| *LYRIC_WIDTH + 4 + (*CREDITS_WIDTH - ASCII_ART_WIDTH) / 2);
+    let ascii_art_y = credits_height + 3;
 
-static ASCII_ART_Y: LazyLock<i32> = LazyLock::new(|| *CREDITS_HEIGHT + 3);
+    let credits_pos_x = lyric_width + 4;
 
-static CREDITS_POS_X: LazyLock<i32> = LazyLock::new(|| *LYRIC_WIDTH + 4);
+    let cursor_x = AtomicI32::new(0);
+    let cursor_y = AtomicI32::new(0);
+    let is_end_draw = AtomicBool::new(false);
 
-static CURSOR_X: AtomicI32 = AtomicI32::new(0);
-static CURSOR_Y: AtomicI32 = AtomicI32::new(0);
-static IS_END_DRAW: AtomicBool = AtomicBool::new(false);
+    let cfg = Config {
+        is_end_draw,
+        cursor_x,
+        cursor_y,
+        credits_pos_x,
+        ascii_art_x,
+        ascii_art_y,
+        lyric_height,
+        lyric_width,
+        credits_height,
+        credits_width,
+        ascii_art_height,
+        is_vt,
+        enable_screen_buffer,
+        enable_color,
+    };
+
+    let _ = CFG.set(cfg);
+
+    Ok(())
+}
 
 fn _print(str: &str, new_line: bool) {
+    let cfg = CFG.get().unwrap();
     if new_line {
         println!("{}", str);
-        CURSOR_X.store(1, Release);
-        CURSOR_Y.fetch_add(1, Release);
+        cfg.cursor_x.store(1, Release);
+        cfg.cursor_y.fetch_add(1, Release);
     } else {
         print!("{}", str);
-        CURSOR_X.fetch_add(str.chars().count() as i32, Release);
+        cfg.cursor_x.fetch_add(str.chars().count() as i32, Release);
     }
 }
 
 pub fn begin_draw() {
-    if *ENABLE_SCREEN_BUFFER {
+    let cfg = CFG.get().unwrap();
+    if cfg.enable_screen_buffer {
         print!("\x1b[?1049h");
     }
-    if *ENABLE_COLOR {
+    if cfg.enable_color {
         print!("\x1b[33;40;1m");
     }
 }
 
 pub fn end_draw() {
-    IS_END_DRAW.store(true, Release);
+    let cfg = CFG.get().unwrap();
+    cfg.is_end_draw.store(true, Release);
 
-    if *ENABLE_COLOR {
+    if cfg.enable_color {
         print!("\x1b[0m");
     }
 
-    if *ENABLE_SCREEN_BUFFER {
+    if cfg.enable_screen_buffer {
         print!("\x1b[?1049l");
     } else {
         clear();
@@ -161,8 +171,9 @@ pub fn end_draw() {
 }
 
 pub fn clear() {
-    CURSOR_X.store(1, Release);
-    CURSOR_Y.store(1, Release);
+    let cfg = CFG.get().unwrap();
+    cfg.cursor_x.store(1, Release);
+    cfg.cursor_y.store(1, Release);
 
     print!("\x1b[2J");
 }
@@ -172,30 +183,32 @@ pub fn r#move(x: i32, y: i32, update_cursor: bool) {
     stdout().flush().unwrap();
 
     if update_cursor {
-        CURSOR_X.store(x, Release);
-        CURSOR_Y.store(y, Release);
+        let cfg = CFG.get().unwrap();
+        cfg.cursor_x.store(x, Release);
+        cfg.cursor_y.store(y, Release);
     }
 }
 
 pub fn draw_frame() {
+    let cfg = CFG.get().unwrap();
     r#move(1, 1, true);
 
-    let lyric_width = *LYRIC_WIDTH as usize;
-    let credits_width = *CREDITS_WIDTH as usize;
+    let lyric_width = cfg.lyric_width as usize;
+    let credits_width = cfg.credits_width as usize;
     let str = format!(
         " {}  {} ",
         "-".repeat(lyric_width),
         "-".repeat(credits_width)
     );
-    _print(&str, !IS_VT.is_some());
+    _print(&str, !cfg.is_vt.is_some());
 
-    for _ in 0..*CREDITS_HEIGHT {
+    for _ in 0..cfg.credits_height {
         let str: String = format!(
             "|{}||{}|",
             " ".repeat(lyric_width),
             " ".repeat(credits_width)
         );
-        _print(&str, !IS_VT.is_some());
+        _print(&str, !cfg.is_vt.is_some());
     }
 
     let str = format!(
@@ -203,9 +216,9 @@ pub fn draw_frame() {
         " ".repeat(lyric_width),
         "-".repeat(credits_width)
     );
-    _print(&str, !IS_VT.is_some());
+    _print(&str, !cfg.is_vt.is_some());
 
-    for _ in 0..(*LYRIC_HEIGHT - 1 - *CREDITS_HEIGHT) {
+    for _ in 0..(cfg.lyric_height - 1 - cfg.credits_height) {
         _print(&format!("|{}|", " ".repeat(lyric_width)), true);
     }
 
@@ -240,11 +253,12 @@ pub fn draw_lyrics(str: &str, x: i32, y: i32, interval: f64, new_line: bool) -> 
 }
 
 pub fn draw_arts(ch: i32, x: i32, y: i32) {
+    let cfg = CFG.get().unwrap();
     let arts = &data::ARTS;
-    for dy in 0..ASCII_ART_HEIGHT {
+    for dy in 0..cfg.ascii_art_height {
         {
             let mut lock = stdout().lock();
-            r#move(*ASCII_ART_X, *ASCII_ART_Y + dy, true);
+            r#move(cfg.ascii_art_x, cfg.ascii_art_y + dy, true);
             print!("{}", arts[ch as usize][dy as usize]);
             lock.flush().unwrap();
         }
@@ -257,6 +271,7 @@ pub fn draw_credits() {
     let build = thread::Builder::new().name("credits".to_owned());
     build
         .spawn(|| {
+            let cfg = CFG.get().unwrap();
             let credits = data::CREDITS;
             let mut credit_x: i32 = 0;
             let mut i: f64 = 0.0;
@@ -270,44 +285,52 @@ pub fn draw_credits() {
                 if ch == '\n' {
                     credit_x = 0;
                     last_credits.push("".to_owned());
-                    if last_credits.len() as i32 > *CREDITS_HEIGHT {
+                    if last_credits.len() as i32 > cfg.credits_height {
                         last_credits = (&last_credits
-                            [last_credits.len() - *CREDITS_HEIGHT as usize..])
+                            [last_credits.len() - cfg.credits_height as usize..])
                             .to_vec();
                     }
 
-                    if IS_END_DRAW.load(Acquire) {
+                    if cfg.is_end_draw.load(Acquire) {
                         break;
                     }
 
                     let mut lock = stdout().lock();
-                    for y in 2..(2 + *CREDITS_HEIGHT - last_credits.len() as i32) {
-                        r#move(*CREDITS_POS_X, y, false);
-                        write!(lock, "{}", " ".repeat(*CREDITS_WIDTH as usize)).unwrap();
+                    for y in 2..(2 + cfg.credits_height - last_credits.len() as i32) {
+                        r#move(cfg.credits_pos_x, y, false);
+                        write!(lock, "{}", " ".repeat(cfg.credits_width as usize)).unwrap();
                     }
 
                     for k in 0..last_credits.len() as i32 {
-                        let y = 2 + *CREDITS_HEIGHT - last_credits.len() as i32 + k;
-                        r#move(*CREDITS_POS_X, y, false);
+                        let y = 2 + cfg.credits_height - last_credits.len() as i32 + k;
+                        r#move(cfg.credits_pos_x, y, false);
                         write!(lock, "{}", last_credits[k as usize]).unwrap();
                         let count =
-                            *CREDITS_WIDTH - last_credits[k as usize].chars().count() as i32;
+                            cfg.credits_width - last_credits[k as usize].chars().count() as i32;
                         write!(lock, "{}", " ".repeat(count as usize)).unwrap();
                     }
 
-                    r#move(CURSOR_X.load(Acquire), CURSOR_Y.load(Acquire), false);
+                    r#move(
+                        cfg.cursor_x.load(Acquire),
+                        cfg.cursor_y.load(Acquire),
+                        false,
+                    );
                 } else {
                     let str = last_credits.last_mut().unwrap();
                     str.push(ch);
 
-                    if IS_END_DRAW.load(Acquire) {
+                    if cfg.is_end_draw.load(Acquire) {
                         break;
                     }
 
                     let mut lock = stdout().lock();
-                    r#move(*CREDITS_POS_X + credit_x, *CREDITS_HEIGHT + 1, false);
+                    r#move(cfg.credits_pos_x + credit_x, cfg.credits_height + 1, false);
                     write!(lock, "{}", ch.to_string()).unwrap();
-                    r#move(CURSOR_X.load(Acquire), CURSOR_Y.load(Acquire), false);
+                    r#move(
+                        cfg.cursor_x.load(Acquire),
+                        cfg.cursor_y.load(Acquire),
+                        false,
+                    );
 
                     credit_x += 1;
                 }
@@ -321,9 +344,10 @@ pub fn draw_credits() {
 }
 
 pub fn clear_lyrics() {
+    let cfg = CFG.get().unwrap();
     r#move(1, 2, true);
-    for _ in 0..*LYRIC_HEIGHT {
-        _print(&format!("|{}", " ".repeat(*LYRIC_WIDTH as usize)), true);
+    for _ in 0..cfg.lyric_height {
+        _print(&format!("|{}", " ".repeat(cfg.lyric_width as usize)), true);
     }
     r#move(2, 2, true);
 }
