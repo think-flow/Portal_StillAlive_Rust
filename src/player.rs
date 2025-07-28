@@ -14,14 +14,9 @@ fn play_core<P: AsRef<Path>>(file_name: P) -> anyhow::Result<()> {
 
     ensure_mpg123_is_available()?;
 
-    let path = file_name.as_ref();
-    if !path.exists() {
-        bail!("'{}' file not found", path.to_string_lossy().into_owned());
-    }
-
     Command::new("mpg123")
         .arg("-q") // 静默模式
-        .arg(path)
+        .arg(file_name.as_ref())
         .spawn()
         .context("play failed")?;
 
@@ -42,7 +37,7 @@ fn ensure_mpg123_is_available() -> anyhow::Result<()> {
     // 检查命令是否成功执行且输出不为空
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if stdout.is_empty() {
-        bail!("mpg123 command not found\n Use the \"sudo apt install mpg123\" to install");
+        bail!("mpg123 command not found\nUse the \"sudo apt install mpg123\" to install");
     }
 
     Ok(())
