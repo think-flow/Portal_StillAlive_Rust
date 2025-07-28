@@ -58,14 +58,14 @@ fn play_core<P: AsRef<Path>>(file_name: P) -> anyhow::Result<()> {
 #[cfg(target_os = "windows")]
 #[link(name = "winmm")]
 unsafe extern "system" {
-    unsafe fn mciSendStringW(
-        lpstrCommand: *const u16,
-        lpstrReturnString: *mut u16,
-        uReturnLength: u32,
-        hwndCallback: usize,
+    fn mciSendStringW(
+        lpszCommand: *const u16,
+        lpszReturnString: *mut u16,
+        cchReturn: u32,
+        hwndCallback: *mut std::ffi::c_void,
     ) -> u32;
 
-    unsafe fn mciGetErrorStringW(mcierr: u32, lpszErrorText: *mut u16, cchErrorText: u32) -> u32;
+    fn mciGetErrorStringW(fdwError: u32, lpszErrorText: *mut u16, cchErrorText: u32) -> bool;
 }
 
 #[cfg(target_os = "windows")]
@@ -76,14 +76,14 @@ fn mci_send_string(command: &str) -> anyhow::Result<()> {
     let command_u16: Vec<u16> = OsStr::new(command).encode_wide().chain(once(0)).collect();
 
     unsafe {
-        let res = mciSendStringW(command_u16.as_ptr(), null_mut(), 1024 * 1024, 0);
+        let res = mciSendStringW(command_u16.as_ptr(), null_mut(), 0, null_mut());
 
         if res != 0 {
             let mut err_str =
                 format!("Error executing MCI command '{command}'. Error code: {res}. Error Msg: ");
-            let mut buffer = [0; 256];
+            let mut buffer = [0u16; 256];
 
-            mciGetErrorStringW(res, buffer.as_mut_ptr(), buffer.len() as u32);
+            let _ = mciGetErrorStringW(res, buffer.as_mut_ptr(), buffer.len() as u32);
 
             let s = String::from_utf16(&buffer)?;
             err_str.push_str(&s);
