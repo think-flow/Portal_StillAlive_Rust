@@ -89,6 +89,8 @@ pub fn draw<'a>(
 
                 index += 1;
             }
+            // 一句歌词结束后，需要保持光标仍然在lyric区域显示
+            tx.print((cursor_x, cursor_y), "\0".to_owned());
             thread::sleep(Duration::from_millis(10));
         }
         Ok(())
