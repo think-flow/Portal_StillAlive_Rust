@@ -1,11 +1,11 @@
 mod credit;
 mod lyric;
 
-use anyhow::{bail};
+use anyhow::bail;
 use regex_lite::Regex;
 use std::{
+    borrow::Cow,
     env,
-    io::Write,
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -17,13 +17,13 @@ use std::{
 
 const SOUND_FILE_PATH: &str = "./sa1.mp3";
 
-macro_rules! pri {
+macro_rules! typed {
     (true, $($arg:tt)*) => {{
         println!($($arg)*);
     }};
 
     (false, $($arg:tt)*) => {{
-        pri!($($arg)*);
+        typed!($($arg)*);
     }};
 
     // 匹配布尔表达式后跟参数的情况
@@ -31,13 +31,13 @@ macro_rules! pri {
         if $cond {
             println!($($arg)*);
         } else {
-            pri!($($arg)*);
+            typed!($($arg)*);
         }
     }};
 
     ($($arg:tt)*) => {{
         print!($($arg)*);
-        std::io::stdout().flush().unwrap();
+        std::io::Write::flush(&mut std::io::stdout()).expect("Failed to flush stdout");
     }};
 }
 
@@ -65,7 +65,7 @@ pub fn check_support() -> bool {
 
 struct OutputMsg {
     position: Position,
-    content: String,
+    content: Cow<'static, str>,
 }
 
 struct Position {
@@ -90,11 +90,11 @@ pub struct Stage {
 }
 
 trait ChannelEx {
-    fn print(&self, position: (i32, i32), content: String);
+    fn typed(&self, position: (i32, i32), content: Cow<'static, str>);
 }
 
 impl ChannelEx for mpsc::Sender<OutputMsg> {
-    fn print(&self, position: (i32, i32), content: String) {
+    fn typed(&self, position: (i32, i32), content: Cow<'static, str>) {
         let (x, y) = position;
         debug_assert!(x >= 0 && y >= 0);
         let msg = OutputMsg {
@@ -104,7 +104,7 @@ impl ChannelEx for mpsc::Sender<OutputMsg> {
             },
             content,
         };
-        let _ = self.send(msg);
+        self.send(msg).expect("Failed to send message to channel");
     }
 }
 
@@ -205,12 +205,12 @@ impl Stage {
 
     fn begin_draw(&self) {
         if self.enable_screen_buffer {
-            pri!("\x1b[?1049h");
+            typed!("\x1b[?1049h");
         }
         if self.enable_color {
-            pri!("\x1b[33;40;1m");
+            typed!("\x1b[33;40;1m");
         }
-        pri!("\x1b[2J");
+        typed!("\x1b[2J");
     }
 
     fn draw_frame(&self) {
@@ -219,20 +219,20 @@ impl Stage {
         let lyric_width = self.lyric_width as usize;
         let credits_width = self.credits_width as usize;
 
-        pri!(if self.is_vt.is_none(), " {}  {} ","-".repeat(lyric_width), "-".repeat(credits_width)
+        typed!(if self.is_vt.is_none(), " {}  {} ","-".repeat(lyric_width), "-".repeat(credits_width)
         );
 
         for _ in 0..self.credits_height {
-            pri!(if self.is_vt.is_none(),"|{}||{}|"," ".repeat(lyric_width)," ".repeat(credits_width));
+            typed!(if self.is_vt.is_none(),"|{}||{}|"," ".repeat(lyric_width)," ".repeat(credits_width));
         }
 
-        pri!(if self.is_vt.is_none(), "|{}| {} ", " ".repeat(lyric_width), "-".repeat(credits_width));
+        typed!(if self.is_vt.is_none(), "|{}| {} ", " ".repeat(lyric_width), "-".repeat(credits_width));
 
         for _ in 0..(self.lyric_height - 1 - self.credits_height) {
-            pri!(true, "|{}|", " ".repeat(lyric_width));
+            typed!(true, "|{}|", " ".repeat(lyric_width));
         }
 
-        pri!(false, " {} ", "-".repeat(lyric_width));
+        typed!(false, " {} ", "-".repeat(lyric_width));
     }
 
     /// x 为列 y 为行  左上角坐标原点为1,1
@@ -240,7 +240,7 @@ impl Stage {
         debug_assert!(x >= 0);
         debug_assert!(y >= 0);
 
-        pri!("\x1b[{};{}H", y, x);
+        typed!("\x1b[{};{}H", y, x);
     }
 }
 
@@ -255,13 +255,13 @@ impl Stage {
         self.is_end_draw.store(true, Ordering::Release);
 
         if self.enable_color {
-            pri!("\x1b[0m");
+            typed!("\x1b[0m");
         }
 
         if self.enable_screen_buffer {
-            pri!("\x1b[?1049l");
+            typed!("\x1b[?1049l");
         } else {
-            pri!("\x1b[2J");
+            typed!("\x1b[2J");
             self.move_to(1, 1);
         }
     }
@@ -288,7 +288,7 @@ impl Stage {
                 if x > 0 && y > 0 {
                     self.move_to(x as i32, y as i32);
                 }
-                pri!("{}", msg.content);
+                typed!("{}", msg.content);
             }
 
             // 等待lyric 线程执行完毕，并获得其返回的错误值，然后通过?传播出去

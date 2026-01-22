@@ -3,10 +3,15 @@ use crate::{
     data,
     stage::{ChannelEx, Stage},
 };
-use std::time::{Duration, Instant};
+use std::{
+    borrow::Cow,
+    sync::OnceLock,
+    time::{Duration, Instant},
+};
 use std::{collections::VecDeque, sync::atomic::Ordering};
 use std::{sync::mpsc, thread};
 
+static CLEAR_CREDITS_STR: OnceLock<String> = OnceLock::new();
 pub fn draw<'a>(
     s: &'a std::thread::Scope<'a, '_>,
     tx: mpsc::Sender<OutputMsg>,
@@ -16,19 +21,21 @@ pub fn draw<'a>(
     builder.spawn_scoped(s, move || {
         let mut i: f64 = 0.0;
         let mut credit_x: i32 = 0;
-        let length: f64 = data::CREDITS.chars().count() as f64;
+        let length: f64 = data::CREDITS.len() as f64;
         let mut credit_list = VecDeque::with_capacity(stage.credits_height as usize);
         credit_list.push_front("".to_owned());
         let instant = Instant::now();
 
-        for ch in data::CREDITS.chars() {
+        // 这里能确保职员名称只有ascii字符 所以可以安心逐字节遍历
+        for j in 0..data::CREDITS.len() {
+            let ch: &'static str = &data::CREDITS[j..=j];
             if stage.is_end_draw.load(Ordering::Acquire) {
                 return;
             }
 
             let duration: f64 = 174.0 / length * i;
             i += 1.0;
-            if ch == '\n' {
+            if ch == "\n" {
                 credit_x = 0;
 
                 credit_list.push_back("".to_owned());
@@ -36,32 +43,37 @@ pub fn draw<'a>(
                     // 删掉前面多余不用显示的行
                     for _ in 0..credit_list.len() - stage.credits_height as usize {
                         // remove element
-                        let _ = credit_list.pop_front();
+                        _ = credit_list.pop_front();
                     }
                 }
 
                 for y in 2..(2 + stage.credits_height - credit_list.len() as i32) {
-                    tx.print(
+                    tx.typed(
                         (stage.credits_pos_x, y),
-                        format!("{}", " ".repeat(stage.credits_width as usize)),
+                        Cow::Borrowed(CLEAR_CREDITS_STR.get_or_init(|| {
+                            format!("{}", " ".repeat(stage.credits_width as usize))
+                        })),
                     );
                 }
 
                 for k in 0..credit_list.len() as i32 {
                     let y = 2 + stage.credits_height - credit_list.len() as i32 + k;
-                    let count =
-                        stage.credits_width - credit_list[k as usize].chars().count() as i32;
-                    tx.print(
+                    let count = stage.credits_width - credit_list[k as usize].len() as i32;
+                    tx.typed(
                         (stage.credits_pos_x, y),
-                        format!("{}{}", credit_list[k as usize], " ".repeat(count as usize)),
+                        Cow::Owned(format!(
+                            "{}{}",
+                            credit_list[k as usize],
+                            " ".repeat(count as usize)
+                        )),
                     );
                 }
             } else {
                 let str = credit_list.back_mut().unwrap();
-                str.push(ch);
-                tx.print(
+                str.push_str(ch);
+                tx.typed(
                     (stage.credits_pos_x + credit_x, stage.credits_height + 1),
-                    ch.to_string(),
+                    Cow::Borrowed(ch),
                 );
 
                 credit_x += 1;

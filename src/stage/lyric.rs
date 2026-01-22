@@ -4,10 +4,13 @@ use crate::{
     stage::{ChannelEx, Stage},
 };
 use std::{
-    sync::{atomic::Ordering, mpsc},
+    borrow::Cow,
+    sync::{OnceLock, atomic::Ordering, mpsc},
     thread::{self, ScopedJoinHandle},
     time::Duration,
 };
+
+static CLEAR_LYRICS_STR: OnceLock<String> = OnceLock::new();
 
 pub fn draw<'a>(
     s: &'a std::thread::Scope<'a, '_>,
@@ -90,7 +93,7 @@ pub fn draw<'a>(
                 index += 1;
             }
             // 一句歌词结束后，需要保持光标仍然在lyric区域显示
-            tx.print((cursor_x, cursor_y), "\0".to_owned());
+            tx.typed((cursor_x, cursor_y), Cow::Borrowed("\0"));
             thread::sleep(Duration::from_millis(10));
         }
         Ok(())
@@ -102,9 +105,9 @@ pub fn draw<'a>(
 fn draw_arts(ch: i32, stage: &Stage, tx: &mpsc::Sender<OutputMsg>) {
     let art = data::ARTS[ch as usize];
     for dy in 0..stage.ascii_art_height {
-        tx.print(
+        tx.typed(
             (stage.ascii_art_x, stage.ascii_art_y + dy),
-            art[dy as usize].to_owned(),
+            Cow::Borrowed(art[dy as usize]),
         );
         thread::sleep(Duration::from_millis(10));
     }
@@ -112,16 +115,18 @@ fn draw_arts(ch: i32, stage: &Stage, tx: &mpsc::Sender<OutputMsg>) {
 
 fn draw_lyrics(
     tx: &mpsc::Sender<OutputMsg>,
-    str: &str,
+    str: &'static str,
     cursor_x: &mut i32,
     cursor_y: &mut i32,
     interval: f64,
     new_line: bool,
 ) {
-    for c in str.chars() {
-        tx.print((*cursor_x, *cursor_y), c.to_string());
+    // 这里能确保歌词只有ascii字符 所以可以安心逐字节遍历
+    for i in 0..str.len() {
+        let c = &str[i..=i];
+        tx.typed((*cursor_x, *cursor_y), Cow::Borrowed(c));
         thread::sleep(Duration::from_secs_f64(interval));
-        if c != '\0' {
+        if c != "\0" {
             *cursor_x += 1;
         }
     }
@@ -130,14 +135,30 @@ fn draw_lyrics(
         *cursor_x = 2;
         *cursor_y += 1;
     }
+    // 如果歌唱含有utf8字符，则用char遍历
+    // for c in str.chars() {
+    //     tx.typed((*cursor_x, *cursor_y), Some(Cow::Owned(c.to_string())));
+    //     thread::sleep(Duration::from_secs_f64(interval));
+    //     if c != '\0' {
+    //         *cursor_x += 1;
+    //     }
+    // }
+
+    // if new_line {
+    //     *cursor_x = 2;
+    //     *cursor_y += 1;
+    // }
 }
 
 fn clear_lyrics(tx: &mpsc::Sender<OutputMsg>, stage: &Stage) {
     let mut y = 2;
     for _ in 0..stage.lyric_height {
-        tx.print(
+        tx.typed(
             (2, y),
-            format!("{}\n", " ".repeat(stage.lyric_width as usize)),
+            Cow::Borrowed(
+                CLEAR_LYRICS_STR
+                    .get_or_init(|| format!("{}\n", " ".repeat(stage.lyric_width as usize))),
+            ),
         );
         y += 1;
     }
