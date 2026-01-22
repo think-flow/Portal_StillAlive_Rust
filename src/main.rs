@@ -1,14 +1,9 @@
-mod data;
-mod player;
-mod stage;
-
 use anyhow::Context;
-
-use crate::stage::Stage;
-use std::{process, sync::Arc};
+use portal_still_alive::stage;
+use std::sync::Arc;
 
 fn main() -> anyhow::Result<()> {
-    let stage = Stage::init()?;
+    let stage = stage::init()?;
     let stage = Arc::new(stage);
     let weak_stage = Arc::downgrade(&stage);
 
@@ -17,7 +12,7 @@ fn main() -> anyhow::Result<()> {
             stage.stop();
         }
         println!("Got it! Exiting...");
-        process::exit(0);
+        std::process::exit(0);
     })
     .context("Error setting Ctrl-C handler")?;
 

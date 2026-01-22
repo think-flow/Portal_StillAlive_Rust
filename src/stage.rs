@@ -52,7 +52,7 @@ unsafe extern "system" {
 }
 
 #[cfg(target_os = "windows")]
-pub fn check_support() -> bool {
+fn check_support() -> bool {
     unsafe {
         let handle = GetStdHandle(-11i32 as u32);
         let mut mode: u32 = 0;
@@ -61,6 +61,10 @@ pub fn check_support() -> bool {
         }
         return false;
     }
+}
+
+pub fn init() -> anyhow::Result<Stage> {
+    Stage::init()
 }
 
 struct OutputMsg {
@@ -109,7 +113,7 @@ impl ChannelEx for mpsc::Sender<OutputMsg> {
 }
 
 impl Stage {
-    pub fn init() -> anyhow::Result<Self> {
+    fn init() -> anyhow::Result<Self> {
         let enable_sound = !env::args().any(|arg| arg == "--no-sound");
         if enable_sound {
             if !Path::new(SOUND_FILE_PATH).exists() {
