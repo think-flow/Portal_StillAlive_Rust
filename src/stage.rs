@@ -1,45 +1,18 @@
+mod art;
 mod credit;
 mod lyric;
 
+use crate::typed;
 use anyhow::bail;
-use regex_lite::Regex;
 use std::{
-    borrow::Cow,
     env,
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const SOUND_FILE_PATH: &str = "./sa1.mp3";
-
-macro_rules! typed {
-    (true, $($arg:tt)*) => {{
-        println!($($arg)*);
-    }};
-
-    (false, $($arg:tt)*) => {{
-        typed!($($arg)*);
-    }};
-
-    // 匹配布尔表达式后跟参数的情况
-    (if $cond:expr, $($arg:tt)*) => {{
-        if $cond {
-            println!($($arg)*);
-        } else {
-            typed!($($arg)*);
-        }
-    }};
-
-    ($($arg:tt)*) => {{
-        print!($($arg)*);
-        std::io::Write::flush(&mut std::io::stdout()).expect("Failed to flush stdout");
-    }};
-}
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
@@ -67,16 +40,6 @@ pub fn init() -> anyhow::Result<Stage> {
     Stage::init()
 }
 
-struct OutputMsg {
-    position: Position,
-    content: Cow<'static, str>,
-}
-
-struct Position {
-    x: u16,
-    y: u16,
-}
-
 pub struct Stage {
     is_end_draw: AtomicBool,
     credits_pos_x: i32,
@@ -87,29 +50,10 @@ pub struct Stage {
     credits_height: i32,
     credits_width: i32,
     ascii_art_height: i32,
-    is_vt: Option<String>,
+    is_vt_version: u16,
     enable_screen_buffer: bool,
     enable_color: bool,
     enable_sound: bool,
-}
-
-trait ChannelEx {
-    fn typed(&self, position: (i32, i32), content: Cow<'static, str>);
-}
-
-impl ChannelEx for mpsc::Sender<OutputMsg> {
-    fn typed(&self, position: (i32, i32), content: Cow<'static, str>) {
-        let (x, y) = position;
-        debug_assert!(x >= 0 && y >= 0);
-        let msg = OutputMsg {
-            position: Position {
-                x: x as u16,
-                y: y as u16,
-            },
-            content,
-        };
-        self.send(msg).expect("Failed to send message to channel");
-    }
 }
 
 impl Stage {
@@ -131,24 +75,26 @@ impl Stage {
             }
         }
 
-        let is_vt = Regex::new(r"vt(\d+)")?
-            .captures(&term)
-            .map(|c| c[0].to_owned());
+        let is_vt_version: u16 = term
+            .strip_prefix("vt")
+            .and_then(|v| {
+                if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) {
+                    v.parse().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
 
         // xterm, rxvt, konsole ...
         // but fbcon in linux kernel does not support screen buffer
-        let enable_screen_buffer = !(is_vt.is_some() || term == "linux");
+        let enable_screen_buffer = !(is_vt_version > 0 || term == "linux");
 
-        let enable_color = is_vt.is_none()
-            || Regex::new(r"\d+")?
-                .captures(is_vt.as_ref().unwrap())
-                .unwrap()[0]
-                .parse::<i32>()?
-                >= 241;
+        let enable_color = is_vt_version == 0 || is_vt_version >= 241;
 
         let mut term_columns: i32 = 80;
         let mut term_lines: i32 = 24;
-        if is_vt.is_none() {
+        if is_vt_version == 0 {
             if let Some((w, h)) = term_size::dimensions() {
                 term_columns = w as i32;
                 term_lines = h as i32;
@@ -198,7 +144,7 @@ impl Stage {
             credits_height,
             credits_width,
             ascii_art_height,
-            is_vt,
+            is_vt_version,
             enable_screen_buffer,
             enable_color,
             enable_sound,
@@ -223,14 +169,14 @@ impl Stage {
         let lyric_width = self.lyric_width as usize;
         let credits_width = self.credits_width as usize;
 
-        typed!(if self.is_vt.is_none(), " {}  {} ","-".repeat(lyric_width), "-".repeat(credits_width)
+        typed!(if self.is_vt_version == 0, " {}  {} ","-".repeat(lyric_width), "-".repeat(credits_width)
         );
 
         for _ in 0..self.credits_height {
-            typed!(if self.is_vt.is_none(),"|{}||{}|"," ".repeat(lyric_width)," ".repeat(credits_width));
+            typed!(if self.is_vt_version == 0,"|{}||{}|"," ".repeat(lyric_width)," ".repeat(credits_width));
         }
 
-        typed!(if self.is_vt.is_none(), "|{}| {} ", " ".repeat(lyric_width), "-".repeat(credits_width));
+        typed!(if self.is_vt_version == 0, "|{}| {} ", " ".repeat(lyric_width), "-".repeat(credits_width));
 
         for _ in 0..(self.lyric_height - 1 - self.credits_height) {
             typed!(true, "|{}|", " ".repeat(lyric_width));
@@ -270,39 +216,110 @@ impl Stage {
         }
     }
 
-    /// block run untill the show is finished
     pub fn run(&self) -> anyhow::Result<()> {
         self.begin_draw();
         self.draw_frame();
         self.move_to(2, 2);
         thread::sleep(Duration::from_secs(2));
 
-        thread::scope(|s| -> anyhow::Result<()> {
-            let (tx, rx) = mpsc::channel::<OutputMsg>();
+        let instant = Instant::now();
+        let lyrics = &crate::data::LYRICS;
+        let mut lyric_idx = 0;
+        let mut cursor_x: i32 = 2;
+        let mut cursor_y: i32 = 2;
+        let mut lyric_state: Option<lyric::LyricState> = None;
+        let mut art_state: Option<art::ArtState> = None;
+        let mut credit_state: Option<credit::CreditState> = None;
 
-            // 启动lyric 线程
-            let handle = lyric::draw(s, tx, self)?;
-
-            // 主线程负责获取消息并打印
-            for msg in rx.iter() {
-                if self.is_end_draw.load(Ordering::Acquire) {
-                    break;
-                }
-                let Position { x, y } = msg.position;
-                if x > 0 && y > 0 {
-                    self.move_to(x as i32, y as i32);
-                }
-                typed!("{}", msg.content);
+        loop {
+            if self.is_end_draw.load(Ordering::Acquire) {
+                break;
+            }
+            if lyric_state.is_none() && art_state.is_none() && lyrics[lyric_idx].mode == 9 {
+                break;
             }
 
-            // 等待lyric 线程执行完毕，并获得其返回的错误值，然后通过?传播出去
-            if let Err(e) = handle.join().unwrap() {
-                self.stop();
-                return Err(e);
+            let past_time = (instant.elapsed().as_millis() / 10) as i32;
+
+            // Fire new lyric events (only when idle)
+            if lyric_state.is_none() && art_state.is_none() {
+                let current = &lyrics[lyric_idx];
+                if past_time > current.time {
+                    match current.mode {
+                        0 | 1 => {
+                            if let crate::data::WordsContent::Str(v) = current.words {
+                                let wc = v.chars().count().max(1) as f64;
+                                let interval = if current.interval < 0.0 {
+                                    (lyrics[lyric_idx + 1].time - current.time) as f64 / 100.0 / wc
+                                } else {
+                                    current.interval / wc
+                                };
+                                lyric_state = Some(lyric::LyricState::new(
+                                    v,
+                                    cursor_x,
+                                    cursor_y,
+                                    interval,
+                                    current.mode == 0,
+                                ));
+                            }
+                        }
+                        2 => {
+                            if let crate::data::WordsContent::Int(v) = current.words {
+                                art_state = Some(art::ArtState::new(v));
+                            }
+                        }
+                        3 => {
+                            lyric::clear_lyrics(self);
+                            cursor_x = 2;
+                            cursor_y = 2;
+                        }
+                        4 => {
+                            if self.enable_sound {
+                                crate::player::play(SOUND_FILE_PATH)?;
+                            }
+                        }
+                        5 => {
+                            credit_state = Some(credit::CreditState::new());
+                        }
+                        _ => {}
+                    }
+                    lyric_idx += 1;
+                }
             }
 
-            Ok(())
-        })?;
+            // Tick lyric typing state machine
+            if let Some(ref mut ts) = lyric_state {
+                ts.tick(self);
+                if ts.done() {
+                    cursor_x = ts.cursor_x;
+                    cursor_y = ts.cursor_y;
+                    lyric_state = None;
+                }
+            }
+
+            // Tick ASCII art state machine
+            if let Some(ref mut as_) = art_state {
+                as_.tick(self);
+                if as_.done(self) {
+                    art_state = None;
+                }
+            }
+
+            // Tick credit state machine
+            if let Some(ref mut cs) = credit_state {
+                while cs.is_ready() {
+                    cs.tick(self);
+                }
+            }
+
+            // Cursor refresh (only when idle)
+            if lyric_state.is_none() {
+                self.move_to(cursor_x, cursor_y);
+                typed!("\0");
+            }
+
+            thread::sleep(Duration::from_millis(10));
+        }
 
         Ok(())
     }

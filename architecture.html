@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal Still Alive — 单线程架构重构深度解析</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fragment+Mono:ital@0;1&family=DM+Mono:ital@0;1&family=Syne:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0d15;
+  --bg-panel: #10131f;
+  --bg-card: #151829;
+  --bg-hover: #1b1f33;
+  --bg-code: #0e101c;
+  --border: #1e2340;
+  --border-light: #282f54;
+  --text: #d4d8ed;
+  --text-muted: #6b7293;
+  --text-dim: #3d4260;
+  --accent: #f0c75e;
+  --accent-dim: #8a7240;
+  --green: #5ecc8a;
+  --green-dim: #2d6b4e;
+  --red: #ec5e6e;
+  --red-dim: #6b2e38;
+  --cyan: #64d4ed;
+  --cyan-dim: #2d6578;
+  --purple: #b88aee;
+  --purple-dim: #5a3a88;
+  --orange: #e8934a;
+  --radius: 8px;
+  --shadow: 0 8px 32px rgba(0,0,0,.6);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Syne', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 15% 60%, rgba(240,199,94,.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 30%, rgba(100,212,237,.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 90%, rgba(184,138,238,.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(30,35,64,.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30,35,64,.15) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+.container {
+  position: relative;
+  z-index: 1;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+h2 {
+  font-size: clamp(28px, 3.5vw, 44px);
+  font-weight: 800;
+  letter-spacing: -.025em;
+  line-height: 1.1;
+  margin-bottom: 12px;
+}
+
+h3 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero {
+  text-align: center;
+  padding: 100px 0 50px;
+  position: relative;
+}
+.hero::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 5%;
+  right: 5%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent-dim), var(--accent), var(--accent-dim), transparent);
+}
+
+.hero-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+.hero-tag .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent);
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+  0%,100% { opacity: .3; transform: scale(.7); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+.hero h1 {
+  font-size: clamp(36px, 6vw, 64px);
+  font-weight: 800;
+  letter-spacing: -.035em;
+  line-height: 1.05;
+}
+.hero h1 .grad {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--cyan) 50%, var(--purple) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero h1 .outline {
+  -webkit-text-stroke: 1px var(--border-light);
+  -webkit-text-fill-color: transparent;
+}
+.hero p {
+  font-size: 16px;
+  color: var(--text-muted);
+  max-width: 600px;
+  margin: 18px auto 0;
+  line-height: 1.8;
+}
+
+section { padding: 60px 0; }
+.section-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.section-label::before {
+  content: '';
+  width: 16px; height: 1px;
+  background: var(--accent-dim);
+}
+.section-desc {
+  font-size: 15px;
+  color: var(--text-muted);
+  line-height: 1.8;
+  max-width: 680px;
+  margin-bottom: 32px;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  transition: border-color .25s, box-shadow .25s;
+}
+.card:hover {
+  border-color: rgba(240,199,94,.15);
+  box-shadow: 0 4px 24px rgba(0,0,0,.35);
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 14px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 15px;
+}
+.card-title .tag {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  padding: 3px 10px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+.tag-del { background: rgba(236,94,110,.12); color: var(--red); border: 1px solid rgba(236,94,110,.2); }
+.tag-new { background: rgba(94,204,138,.12); color: var(--green); border: 1px solid rgba(94,204,138,.2); }
+.tag-kep { background: rgba(100,212,237,.12); color: var(--cyan); border: 1px solid rgba(100,212,237,.2); }
+
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 720px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+@media (max-width: 720px) { .grid-3 { grid-template-columns: 1fr; } }
+
+.code {
+  font-family: 'Fragment Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.85;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  overflow-x: auto;
+  white-space: pre;
+  position: relative;
+}
+.code[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  top: 6px; right: 10px;
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.code .c { color: var(--text-dim); font-style: italic; }
+.code .kw { color: var(--accent); }
+.code .ty { color: var(--cyan); }
+.code .fn { color: var(--green); }
+.code .str { color: var(--red); }
+.code .nu { color: var(--purple); }
+.code .op { color: var(--orange); }
+.code .hl { color: var(--accent); }
+.code .gr { color: var(--green); }
+.code .cy { color: var(--cyan); }
+.code .pu { color: var(--purple); }
+
+.diag {
+  font-family: 'Fragment Mono', monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 18px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.diag .c { color: var(--text-dim); }
+.diag .ar { color: var(--text-muted); }
+.diag .rd { color: var(--red); }
+.diag .gr { color: var(--green); }
+.diag .hl { color: var(--accent); }
+.diag .cy { color: var(--cyan); }
+.diag .pu { color: var(--purple); }
+.diag .or { color: var(--orange); }
+
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+@media (max-width: 640px) { .stat-grid { grid-template-columns: 1fr 1fr; } }
+.stat {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  text-align: center;
+}
+.stat .n { font-size: 32px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+.stat .l { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+.tag-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.tag-group .t {
+  display: inline-block;
+  font-family: 'Fragment Mono', monospace;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.tag-group .t.rd { border-color: rgba(236,94,110,.25); color: var(--red); }
+.tag-group .t.gr { border-color: rgba(94,204,138,.25); color: var(--green); }
+.tag-group .t.cy { border-color: rgba(100,212,237,.25); color: var(--cyan); }
+
+ic { font-family: 'Fragment Mono', monospace; font-size: 13px; padding: 1px 6px; background: var(--bg-code); border: 1px solid var(--border); border-radius: 3px; color: var(--accent); }
+
+.callout {
+  background: var(--bg-card);
+  border-left: 3px solid var(--accent);
+  padding: 16px 20px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  margin: 16px 0;
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.flow-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; overflow-x: auto; }
+.flow-wrap svg { display: block; margin: 0 auto; max-width: 100%; }
+
+.timeline-item { display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.timeline-item:last-child { border-bottom: none; }
+.tl-time { font-family: 'Fragment Mono', monospace; font-size: 12px; color: var(--text-dim); white-space: nowrap; min-width: 70px; padding-top: 2px; }
+.tl-content { font-size: 14px; line-height: 1.6; }
+.tl-content .mode { font-family: 'Fragment Mono', monospace; font-size: 12px; padding: 1px 6px; border-radius: 3px; background: var(--bg-code); border: 1px solid var(--border); }
+
+footer { text-align: center; padding: 40px 0; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+
+.fade-in { animation: fup .7s ease-out forwards; opacity: 0; }
+.fade-in:nth-child(1) { animation-delay: .05s; }
+.fade-in:nth-child(2) { animation-delay: .15s; }
+.fade-in:nth-child(3) { animation-delay: .25s; }
+.fade-in:nth-child(4) { animation-delay: .35s; }
+.fade-in:nth-child(5) { animation-delay: .45s; }
+.fade-in:nth-child(6) { animation-delay: .55s; }
+.fade-in:nth-child(7) { animation-delay: .65s; }
+@keyframes fup {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.spacer16 { height: 16px; }
+.spacer32 { height: 32px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<section class="hero">
+  <div class="hero-tag"><span class="dot"></span> 技术深度拆解</div>
+  <h1>
+    <span class="grad">单线程</span>
+    <span class="outline">架构重构</span>
+  </h1>
+  <p>
+    Portal Still Alive Rust 终端动画播放器：从 <ic>thread::scope</ic> + <ic>mpsc</ic> 的多线程模型，
+    到基于状态机 + 协作式 tick 的单线程事件循环。
+  </p>
+</section>
+
+<!-- ─── Before ─── -->
+<section>
+  <div class="section-label">Before</div>
+  <h2>原始多线程架构</h2>
+  <p class="section-desc">
+    重构前，程序使用 3 个线程通过 1 个 mpsc channel 协作。每次字符输出都要经过
+    线程上下文切换 + 锁竞争 + 堆分配 + 反序列化。
+  </p>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title"><span>线程结构</span><span class="tag tag-del">已删除</span></div>
+      <div class="diag">
+<span class="c">  Stage::run()</span>
+<span class="c">    thread::scope(|s| {</span>
+<span class="rd">      let (tx, rx) = mpsc::channel();</span>
+<span class="rd">      let h = lyric::draw(s, tx, &stage);</span>
+<span class="c">      for msg in rx.iter() {</span>
+<span class="c">        move_to(msg.x, msg.y);</span>
+<span class="c">        print!("{}", msg.content);</span>
+<span class="c">      }</span>
+<span class="c">    });</span>
+      </div>
+      <div class="tag-group">
+        <span class="t rd">thread::scope</span>
+        <span class="t rd">mpsc::channel</span>
+        <span class="t rd">rx.iter()</span>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>消息传递开销</span><span class="tag tag-del">已删除</span></div>
+      <div class="diag">
+<span class="c">  每输出一个字符：</span>
+<span class="c">  工作线程 → OutputMsg{ Cow } → send()</span>
+<span class="rd">    1) mpsc 内部堆分配</span>
+<span class="rd">    2) 锁竞争</span>
+<span class="rd">    3) Receiver 唤醒</span>
+<span class="c">  主线程 → recv() → move_to → print</span>
+      </div>
+      <div class="tag-group">
+        <span class="t rd">OutputMsg</span>
+        <span class="t rd">Cow&lt;&gt;</span>
+        <span class="t rd">ChannelEx trait</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── After ─── -->
+<section>
+  <div class="section-label">After</div>
+  <h2>单线程事件循环 + 三状态机</h2>
+  <p class="section-desc">
+    重构后，<ic>stage.rs</ic> 是编排器，声明三个子模块作为状态机，在 10ms 主循环中依次 tick。
+  </p>
+
+  <div class="code" data-label="文件结构">
+<span class="c">  src/</span>
+<span class="gr">  ├── stage.rs          ← 编排器（Stage + run() 主循环）</span>
+<span class="cy">  ├── stage/</span>
+<span class="cy">  │   ├── art.rs        ← ArtState 状态机</span>
+<span class="cy">  │   ├── credit.rs     ← CreditState 状态机</span>
+<span class="cy">  │   └── lyric.rs      ← LyricTyping + clear_lyrics</span>
+<span class="c">  ├── data/...</span>
+<span class="c">  ├── lib.rs            ← typed! 宏</span>
+<span class="c">  └── main.rs           ← 入口 + 退出等待</span>
+  </div>
+
+  <div class="spacer16"></div>
+
+  <div class="code" data-label="stage.rs">
+<span class="c">  // 三个状态机子模块</span>
+  <span class="kw">mod</span> art;
+  <span class="kw">mod</span> credit;
+  <span class="kw">mod</span> lyric;
+
+<span class="kw">pub fn</span> run(&self) -&gt; <span class="ty">Result</span>&lt;()&gt; {
+    <span class="kw">let mut</span> typing_state: <span class="ty">Option</span>&lt;<span class="ty">lyric::LyricTyping</span>&gt;   = <span class="ty">None</span>;
+    <span class="kw">let mut</span> art_state:     <span class="ty">Option</span>&lt;<span class="ty">art::ArtState</span>&gt;       = <span class="ty">None</span>;
+    <span class="kw">let mut</span> credit_state: <span class="ty">Option</span>&lt;<span class="ty">credit::CreditState</span>&gt; = <span class="ty">None</span>;
+
+    <span class="kw">loop</span> {  <span class="c">// ─── 10ms 主循环 ───</span>
+        <span class="c">// 1. 空闲时触发新事件</span>
+        <span class="kw">if</span> typing_state.is_none() && art_state.is_none() {
+            <span class="kw">match</span> lyrics[lyric_idx].mode {
+                0|1 =&gt; typing_state = <span class="ty">Some</span>(<span class="ty">lyric::LyricTyping</span>::<span class="fn">new</span>(...));
+                2   =&gt; art_state   = <span class="ty">Some</span>(<span class="ty">art::ArtState</span>::<span class="fn">new</span>(...));
+                3   =&gt; <span class="fn">lyric::clear_lyrics</span>(self);
+                4   =&gt; <span class="fn">player::play</span>(...);
+                5   =&gt; credit_state = <span class="ty">Some</span>(<span class="ty">CreditState</span>::<span class="fn">new</span>());
+            }
+        }
+        <span class="c">// 2. 依次 tick 所有活跃状态机</span>
+        <span class="kw">if let Some</span>(ref mut ts) = typing_state  { ts.<span class="fn">tick</span>(self); }
+        <span class="kw">if let Some</span>(ref mut as_) = art_state    { as_.<span class="fn">tick</span>(self); }
+        <span class="kw">if let Some</span>(ref mut cs) = credit_state {
+            <span class="kw">while</span> cs.<span class="fn">is_ready</span>() { cs.<span class="fn">tick</span>(self); }
+        }
+        <span class="c">// 3. 游标刷新 + 睡眠</span>
+        <span class="fn">thread::sleep</span>(<span class="ty">Duration</span>::from_millis(<span class="nu">10</span>));
+    }
+}
+  </div>
+</section>
+
+<!-- ─── LyricTyping ─── -->
+<section>
+  <div class="section-label">State Machine · 1/3</div>
+  <h2>LyricTyping — 歌词打字</h2>
+  <p class="section-desc">
+    在 <ic>stage/lyric.rs</ic> 中。每次 <ic>tick()</ic> 检查 <ic>elapsed &gt;= char_idx × interval</ic>，条件满足时输出一个字符。
+  </p>
+
+  <div class="code" data-label="stage/lyric.rs">
+<span class="kw">pub struct</span> <span class="ty">LyricTyping</span> {
+    <span class="kw">pub</span> text:      &amp;<span class="kw">'static</span> <span class="kw">str</span>,
+    <span class="kw">pub</span> char_idx:  <span class="kw">usize</span>,
+    <span class="kw">pub</span> cursor_x: <span class="kw">i32</span>,
+    <span class="kw">pub</span> cursor_y: <span class="kw">i32</span>,
+    interval:  <span class="kw">f64</span>,
+    new_line:  <span class="kw">bool</span>,
+    started_at: <span class="ty">Instant</span>,
+}
+
+<span class="kw">impl</span> <span class="ty">LyricTyping</span> {
+    <span class="kw">pub fn</span> <span class="fn">tick</span>(&amp;mut self, stage: &amp;<span class="ty">Stage</span>) {
+        <span class="kw">let</span> elapsed = self.started_at.<span class="fn">elapsed</span>().<span class="fn">as_secs_f64</span>();
+        <span class="kw">while</span> self.char_idx &lt; self.text.len() {
+            <span class="kw">if</span> elapsed &lt; self.char_idx <span class="kw">as</span> f64 * self.interval {
+                <span class="kw">return</span>;  <span class="c">// 时间未到，下次 tick 再试</span>
+            }
+            <span class="c">// 输出一个字符</span>
+            stage.<span class="fn">move_to</span>(self.cursor_x, self.cursor_y);
+            <span class="fn">typed</span>("{}", &amp;self.text[self.char_idx..]);
+            self.char_idx += 1;
+        }
+    }
+}
+  </div>
+</section>
+
+<!-- ─── ArtState ─── -->
+<section>
+  <div class="section-label">State Machine · 2/3</div>
+  <h2>ArtState — ASCII art</h2>
+  <p class="section-desc">
+    在 <ic>stage/art.rs</ic> 中。每 <ic>tick()</ic> 输出一行 art，速率由主循环 10ms 间隔保证。不再阻塞 200ms。
+  </p>
+
+  <div class="code" data-label="stage/art.rs">
+<span class="kw">pub struct</span> <span class="ty">ArtState</span> {
+    <span class="kw">pub</span> ch: <span class="kw">i32</span>,
+    <span class="kw">pub</span> dy: <span class="kw">i32</span>,
+}
+
+<span class="kw">impl</span> <span class="ty">ArtState</span> {
+    <span class="kw">pub fn</span> <span class="fn">tick</span>(&amp;mut self, stage: &amp;<span class="ty">Stage</span>) {
+        <span class="kw">if</span> self.dy &gt;= stage.ascii_art_height { <span class="kw">return</span>; }
+        <span class="kw">let</span> art = <span class="ty">data::ARTS</span>[self.ch <span class="kw">as</span> usize];
+        stage.<span class="fn">move_to</span>(stage.ascii_art_x, stage.ascii_art_y + self.dy);
+        <span class="fn">typed</span>("{}", art[self.dy <span class="kw">as</span> usize]);
+        self.dy += 1;
+    }
+}
+  </div>
+</section>
+
+<!-- ─── CreditState ─── -->
+<section>
+  <div class="section-label">State Machine · 3/3</div>
+  <h2>CreditState — 职员表滚动</h2>
+  <p class="section-desc">
+    在 <ic>stage/credit.rs</ic> 中。<ic>is_ready()</ic> 检查当前是否该显示下一个字符，主循环用 <ic>while</ic> 一次性消化积压。
+    行文本通过字节偏移量从 <ic>CREDITS</ic> 直接切片获得，无需额外分配。
+  </p>
+
+  <div class="code" data-label="stage/credit.rs">
+<span class="kw">pub struct</span> <span class="ty">CreditState</span> {
+    j:          <span class="kw">usize</span>,
+    line_idx:   <span class="kw">usize</span>,
+    char_pos:   <span class="kw">usize</span>,
+    started_at: <span class="ty">Instant</span>,
+    line_starts: <span class="ty">Vec</span>&lt;<span class="kw">u32</span>&gt;,  <span class="c">// 每行在 CREDITS 中的字节偏移</span>
+}
+
+<span class="kw">impl</span> <span class="ty">CreditState</span> {
+    <span class="kw">pub fn</span> <span class="fn">is_ready</span>(&amp;self) -&gt; bool {
+        !self.<span class="fn">is_done</span>()
+        && self.started_at.<span class="fn">elapsed</span>().<span class="fn">as_secs_f64</span>()
+           &gt;= <span class="nu">174.0</span> * self.j <span class="kw">as</span> f64 / <span class="ty">CREDITS</span>.len() <span class="kw">as</span> f64
+    }
+
+    <span class="kw">pub fn</span> <span class="fn">tick</span>(&amp;mut self, stage: &amp;<span class="ty">Stage</span>) {
+        <span class="kw">let</span> ch = &amp;<span class="ty">CREDITS</span>[self.j..];
+        self.j += 1;
+        <span class="kw">if</span> ch == "\n" {
+            self.line_starts.<span class="fn">push</span>(self.j <span class="kw">as</span> u32);
+            <span class="c">// 底部对齐重绘所有可见行</span>
+            <span class="c">// line_text(i) = &amp;CREDITS[starts[i]..starts[i+1]-1]</span>
+            <span class="fn">redraw_visible</span>(...);
+        } <span class="kw">else</span> {
+            <span class="c">// 在最后一行输出一个字符</span>
+            stage.<span class="fn">move_to</span>(pos_x + char_pos, height + 1);
+            <span class="fn">typed</span>("{}", ch);
+        }
+    }
+}
+  </div>
+</section>
+
+<!-- ─── Diff ─── -->
+<section>
+  <div class="section-label">Delta</div>
+  <h2>代码变更</h2>
+  <p class="section-desc">重构不改变可见行为，但移除了整个多线程通信栈。</p>
+
+  <div class="card">
+    <div class="code">
+<span class="c">  // ======== 删除 ========</span>
+<span class="rd">- use std::sync::mpsc;</span>
+<span class="rd">- use std::borrow::Cow;</span>
+<span class="rd">- struct OutputMsg { position, content: Cow&lt;&gt; }</span>
+<span class="rd">- struct Position</span>
+<span class="rd">- trait ChannelEx</span>
+<span class="rd">- thread::scope + lyric::draw() + credit::draw()</span>
+<span class="rd">- VecDeque&lt;String&gt;  // credit 行缓冲</span>
+<span class="rd">- OnceLock&lt;String&gt;  // credit 清除字符串</span>
+<span class="rd">- LazyLock&lt;Vec&lt;&amp;str&gt;&gt; // CREDIT_LINES 预分割</span>
+<span class="rd">- draw_arts()       // 阻塞函数 → ArtState 状态机</span>
+
+<span class="c">  // ======== 新增 ========</span>
+<span class="gr">+ stage/art.rs     → ArtState 状态机</span>
+<span class="gr">+ stage/lyric.rs   → LyricTyping 状态机 + clear_lyrics</span>
+<span class="gr">+ stage/credit.rs  → CreditState 状态机（底部对齐重绘）</span>
+<span class="gr">+ stage.rs         → 编排器：mod art/credit/lyric + 10ms 主循环</span>
+<span class="gr">+ lib.rs           → typed! 宏</span>
+<span class="gr">+ main.rs          → 动画结束后等待 ENTER 退出</span>
+    </div>
+  </div>
+
+  <div class="spacer16"></div>
+
+  <div class="stat-grid">
+    <div class="stat fade-in">
+      <div class="n" style="color:var(--green)">3→1</div>
+      <div class="l">线程数</div>
+    </div>
+    <div class="stat fade-in">
+      <div class="n" style="color:var(--accent)">0</div>
+      <div class="l">堆分配（动画期间）</div>
+    </div>
+    <div class="stat fade-in">
+      <div class="n" style="color:var(--cyan)">0</div>
+      <div class="l">上下文切换 / 秒</div>
+    </div>
+    <div class="stat fade-in">
+      <div class="n" style="color:var(--purple)">~1MB</div>
+      <div class="l">release 二进制体积</div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  Portal Still Alive · Rust terminal animation · Architecture refactoring report
+</footer>
+
+</body>
+</html>

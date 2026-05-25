@@ -1,6 +1,6 @@
 [package]
 name = "portal_still_alive"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 
 [profile.release]
@@ -13,5 +13,4 @@ codegen-units = 1
 [dependencies]
 anyhow = "1.0.98"
 ctrlc = "3.4.7"
-regex-lite = "0.1.6"
 term_size = "0.3.2"
